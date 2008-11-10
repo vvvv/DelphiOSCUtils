@@ -50,7 +50,7 @@ type
   TOSCPacket = class;
   TOSCMessage = class;
 
-  TOSCPacket = class abstract(TObject)
+  TOSCPacket = class(TObject)
   private
   protected
     FBytes: PByte;
