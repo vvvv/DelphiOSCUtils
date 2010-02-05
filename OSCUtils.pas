@@ -50,13 +50,10 @@ type
   TOSCPacket = class;
   TOSCMessage = class;
 
-  TOSCPacket = class(TObject)
+  TOSCPacket = class (TObject)
   private
   protected
     FBytes: PByte;
-    function MakeOSCFloat(value: Single): String;
-    function MakeOSCInt(value: Integer): String;
-    function MakeOSCString(value: String): String;
     function MatchBrackets(pMessage, pAddress: PChar): Boolean;
     function MatchList(pMessage, pAddress: PChar): Boolean;
     function MatchPattern(pMessage, pAddress: PChar): Boolean;
@@ -68,9 +65,6 @@ type
     class function Unpack(Bytes: PByte; Count: Integer): TOSCPacket; overload;
     class function Unpack(Bytes: PByte; Offset, Count: Integer; TimeTag: Extended =
         0): TOSCPacket; overload; virtual;
-    class function UnpackInt(Bytes: PByte; var Offset: Integer): Integer; static;
-    class function UnpackFloat(Bytes: PByte; var Offset: Integer): Single; static;
-    class function UnpackString(Bytes: PByte; var Offset: Integer): string; static;
   end;
 
   TOSCMessage = class(TOSCPacket)
@@ -123,6 +117,18 @@ type
         Extended = 0): TOSCPacket; overload; override;
   end;
 
+function MakeOSCFloat(value: Single): String;
+
+function MakeOSCInt(value: Integer): String;
+
+function MakeOSCString(value: String): String;
+
+function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
+
+function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
+
+function UnpackString(Bytes: PByte; var Offset: Integer): string;
+
   const
     OSC_OK = 0;
     OSC_UNRECOGNIZED_TYPETAG = 1;
@@ -133,6 +139,101 @@ implementation
 
 uses
   SysUtils, WinSock, Math;
+
+function MakeOSCFloat(value: Single): String;
+var
+  tmp: Byte;
+  intg, i: Integer;
+begin
+  result := '';
+  intg := Integer(Pointer(value));
+  intg := htonl(intg);
+  for i := 0 to 3 do
+  begin
+    tmp := intg and $ff;
+    result := result + chr(tmp);
+    intg := intg shr 8;
+  end;
+end;
+
+function MakeOSCInt(value: Integer): String;
+var
+  tmp: Byte;
+  i, val: Integer;
+begin
+  result := '';
+  val := htonl(value);
+  for i := 0 to 3 do
+  begin
+    tmp := val and $ff;
+    result := result + chr(tmp);
+    val := val shr 8;
+  end;
+end;
+
+function MakeOSCString(value: String): String;
+var i, ln: Integer;
+begin
+  result := value;
+
+  ln := 4 - (length(value)) mod 4;
+  for i := 0 to ln - 1 do
+    result := result + #0;
+end;
+
+function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
+var
+  i, value: Integer;
+  tmp: PByte;
+begin
+  value := 0;
+  tmp := Bytes;
+  Inc(tmp, Offset);
+
+  for i := 0 to 3 do
+  begin
+    value := value + tmp^ shl (i * 8);
+    Inc(tmp);
+  end;
+
+  Inc(Offset, 4);
+
+  value := ntohl(value);
+  Result := Single(Pointer(value));
+end;
+
+function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
+var
+  i, value: Integer;
+  tmp: PByte;
+begin
+  value := 0;
+  tmp := Bytes;
+  Inc(tmp, Offset);
+
+  for i := 0 to 3 do
+  begin
+    value := value + tmp^ shl (i * 8);
+    Inc(tmp);
+  end;
+
+  Inc(Offset, 4);
+  Result := ntohl(value);
+end;
+
+function UnpackString(Bytes: PByte; var Offset: Integer): string;
+var
+  tmp: PByte;
+  off: Integer;
+begin
+  tmp := Bytes;
+  Inc(tmp, Offset);
+
+  Result := PChar(tmp);
+  off := Length(PChar(tmp));
+  off := off + (4 - off mod 4);
+  Inc(Offset, off)
+end;
 
 
 constructor TOSCMessage.Create(Address: string);
@@ -352,7 +453,9 @@ begin
   while PacketOffset < Count do
   begin
     packetLength := UnpackInt(Bytes, PacketOffset);
-    (Result as TOSCBundle).Add(TOSCPacket.Unpack(Bytes, PacketOffset, packetLength, TimeTag));
+    //note: PacketOffset is always from the very beginning of Bytes!
+    //not the beginning of the current packet.
+    (Result as TOSCBundle).Add(TOSCPacket.Unpack(Bytes, PacketOffset, PacketOffset + packetLength, TimeTag));
     Inc(PacketOffset, packetLength);
   end;
 end;
@@ -360,47 +463,6 @@ end;
 constructor TOSCPacket.Create(Bytes: PByte);
 begin
   FBytes := Bytes;
-end;
-
-function TOSCPacket.MakeOSCFloat(value: Single): String;
-var
-  tmp: Byte;
-  intg, i: Integer;
-begin
-  result := '';
-  intg := Integer(Pointer(value));
-  intg := htonl(intg);
-  for i := 0 to 3 do
-  begin
-    tmp := intg and $ff;
-    result := result + chr(tmp);
-    intg := intg shr 8;
-  end;
-end;
-
-function TOSCPacket.MakeOSCInt(value: Integer): String;
-var
-  tmp: Byte;
-  i, val: Integer;
-begin
-  result := '';
-  val := htonl(value);
-  for i := 0 to 3 do
-  begin
-    tmp := val and $ff;
-    result := result + chr(tmp);
-    val := val shr 8;
-  end;
-end;
-
-function TOSCPacket.MakeOSCString(value: String): String;
-var i, ln: Integer;
-begin
-  result := value;
-
-  ln := 4 - (length(value)) mod 4;
-  for i := 0 to ln - 1 do
-    result := result + #0;
 end;
 
 // we know that pattern[0] == '[' and test[0] != 0 */
@@ -627,62 +689,6 @@ begin
     Result := TOSCBundle.UnPack(Bytes, Offset, Count)
   else
     Result := TOSCMessage.UnPack(Bytes, Offset, Count, TimeTag);
-end;
-
-class function TOSCPacket.UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
-var
-  i, value: Integer;
-  tmp: PByte;
-begin
-  value := 0;
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  for i := 0 to 3 do
-  begin
-    value := value + tmp^ shl (i * 8);
-    Inc(tmp);
-  end;
-
-  Inc(Offset, 4);
-  Result := ntohl(value);
-end;
-
-class function TOSCPacket.UnpackFloat(Bytes: PByte; var Offset: Integer):
-    Single;
-var
-  i, value: Integer;
-  tmp: PByte;
-begin
-  value := 0;
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  for i := 0 to 3 do
-  begin
-    value := value + tmp^ shl (i * 8);
-    Inc(tmp);
-  end;
-
-  Inc(Offset, 4);
-
-  value := ntohl(value);
-  Result := Single(Pointer(value));
-end;
-
-class function TOSCPacket.UnpackString(Bytes: PByte; var Offset: Integer):
-    string;
-var
-  tmp: PByte;
-  off: Integer;
-begin
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  Result := PChar(tmp);
-  off := Length(PChar(tmp));
-  off := off + (4 - off mod 4);
-  Inc(Offset, off)
 end;
 
 end.
