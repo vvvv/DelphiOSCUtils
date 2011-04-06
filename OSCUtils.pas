@@ -18,7 +18,13 @@
 //////initial author
 //joreg -> joreg@vvvv.org
 
+//additions for FreePascal
+//simon -> simonmoscrop@googlemail.com
+
 //////instructions
+////for use with FreePascal
+//define: FPC
+
 ////encoding a single message:
 //first create a message: msg := TOSCMessage.Create(address)
 //then call msg.AddAsString(typetag, value) to add any number of arguments
@@ -117,17 +123,17 @@ type
         Extended = 0): TOSCPacket; overload; override;
   end;
 
-function MakeOSCFloat(value: Single): String;
+  function MakeOSCFloat(value: Single): String;
 
-function MakeOSCInt(value: Integer): String;
+  function MakeOSCInt(value: Integer): String;
 
-function MakeOSCString(value: String): String;
+  function MakeOSCString(value: String): String;
 
-function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
+  function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
 
-function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
+  function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
 
-function UnpackString(Bytes: PByte; var Offset: Integer): string;
+  function UnpackString(Bytes: PByte; var Offset: Integer): string;
 
   const
     OSC_OK = 0;
@@ -138,7 +144,7 @@ function UnpackString(Bytes: PByte; var Offset: Integer): string;
 implementation
 
 uses
-  SysUtils, WinSock, Math;
+  SysUtils, Math {$IFNDEF FPC}, WinSock {$ENDIF};
 
 function MakeOSCFloat(value: Single): String;
 var
@@ -147,7 +153,11 @@ var
 begin
   result := '';
   intg := Integer(Pointer(value));
+  {$IFDEF FPC}
+  intg := BEtoN(intg);
+  {$ELSE}
   intg := htonl(intg);
+  {$ENDIF}
   for i := 0 to 3 do
   begin
     tmp := intg and $ff;
@@ -162,7 +172,11 @@ var
   i, val: Integer;
 begin
   result := '';
+  {$IFDEF FPC}
+  val := BEtoN(value);
+  {$ELSE}
   val := htonl(value);
+  {$ENDIF}
   for i := 0 to 3 do
   begin
     tmp := val and $ff;
@@ -198,7 +212,11 @@ begin
 
   Inc(Offset, 4);
 
+  {$IFDEF FPC}
+  value := NtoBE(value);
+  {$ELSE}
   value := ntohl(value);
+  {$ENDIF}
   Result := Single(Pointer(value));
 end;
 
@@ -218,7 +236,11 @@ begin
   end;
 
   Inc(Offset, 4);
+  {$IFDEF FPC}
+  Result := NtoBE(value);
+  {$ELSE}
   Result := ntohl(value);
+  {$ENDIF}
 end;
 
 function UnpackString(Bytes: PByte; var Offset: Integer): string;
@@ -245,7 +267,7 @@ end;
 constructor TOSCMessage.Create(Bytes: PByte);
 begin
   inherited;
-  
+
   FTypeTags := ',';
   FArguments := TStringList.Create;
   FIsDecoded := false;
@@ -331,7 +353,6 @@ end;
 
 function TOSCMessage.GetTypeTag(Index: Integer): string;
 begin
-  // TODO -cMM: TOSCMessage.GetTypeTag default body inserted
   Result := FTypeTags[Index + 2];
 end;
 
@@ -364,8 +385,6 @@ end;
 
 class function TOSCMessage.Unpack(Bytes: PByte; PacketOffset, Count: Integer;
     TimeTag: Extended = 0): TOSCPacket;
-var
-  address: String;
 begin
   Result := TOSCMessage.Create(Bytes);
   //for now decode address only
@@ -562,13 +581,13 @@ begin
     Inc(p);
   end;
 
- (*
- for(restOfPattern = pattern; *restOfPattern != '}'; restOfPattern++) {
-  if (*restOfPattern == 0) {
-    OSCWarning("Unterminated { in pattern \".../%s/...\"", theWholePattern);
-    return FALSE;
-  }
-}   *)
+
+// for(restOfPattern = pattern; *restOfPattern != '}'; restOfPattern++) {
+//  if (*restOfPattern == 0) {
+//    OSCWarning("Unterminated { in pattern \".../%s/...\"", theWholePattern);
+//    return FALSE;
+//  }
+//}
 
   Inc(p); // skip close curly brace
   Inc(pMessage); // skip open curly brace
