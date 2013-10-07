@@ -29,6 +29,7 @@
 //first create a message: msg := TOSCMessage.Create(address)
 //then call msg.AddAsString(typetag, value) to add any number of arguments
 //with  msg.ToOSCString you get its osc-string representation
+
 ////encoding a bundle:
 //first create a bundle: bundle := TOSCBundle.Create
 //then add any number of packets (i.e. message, bundle) via bundle.Add(packet)
@@ -50,7 +51,7 @@ unit OSCUtils;
 
 interface
 
-uses Classes, Contnrs;
+uses Classes, Contnrs, SysUtils, System.Generics.Collections;
 
 type
   TOSCPacket = class;
@@ -59,48 +60,53 @@ type
   TOSCPacket = class (TObject)
   private
   protected
-    FBytes: PByte;
+    FBytes: TBytes;
     function MatchBrackets(pMessage, pAddress: PChar): Boolean;
     function MatchList(pMessage, pAddress: PChar): Boolean;
     function MatchPattern(pMessage, pAddress: PChar): Boolean;
   public
-    constructor Create(Bytes: PByte);
+    constructor Create(Bytes: TBytes);
     function MatchAddress(Address: String): TOSCMessage; virtual; abstract;
-    function ToOSCString: string; virtual; abstract;
+    function ToOSCBytes: TBytes; virtual; abstract;
     procedure Unmatch; virtual; abstract;
-    class function Unpack(Bytes: PByte; Count: Integer): TOSCPacket; overload;
-    class function Unpack(Bytes: PByte; Offset, Count: Integer; TimeTag: Extended =
-        0): TOSCPacket; overload; virtual;
+    class function Unpack(Bytes: TBytes; Count: Integer): TOSCPacket; overload;
+    class function Unpack(Bytes: TBytes; Offset, Count: Integer; TimeTag: Extended
+        = 0): TOSCPacket; overload; virtual;
   end;
 
   TOSCMessage = class(TOSCPacket)
   private
     FAddress: string;
-    FArguments: TStringList;
+    FArguments: TList<TBytes>;
     FIsDecoded: Boolean;
     FMatched: Boolean;
     FTimeTag: Extended;
     FTypeTagOffset: Integer;
     FTypeTags: string;
-    function GetArgument(Index: Integer): string;
+    function GetArgument(Index: Integer): TBytes;
+    function GetArgumentAsFloat(Index: Integer): Single;
+    function GetArgumentAsInt(Index: Integer): Integer;
     function GetArgumentCount: Integer;
     function GetTypeTag(Index: Integer): string;
   public
     constructor Create(Address: string); overload;
-    constructor Create(Bytes: PByte); overload;
+    constructor Create(Bytes: TBytes); overload;
     destructor Destroy; override;
-    function AddAsString(TypeTag: Char; Value: String): HResult;
+    function AddAsBytes(const TypeTag: Char; const Value: String; const fs:
+        TFormatSettings): HResult;
     procedure AddFloat(Value: Single);
     procedure AddInteger(Value: Integer);
     procedure AddString(Value: String);
     procedure Decode;
     function MatchAddress(Address: String): TOSCMessage; override;
-    function ToOSCString: string; override;
+    function ToOSCBytes: TBytes; override;
     procedure Unmatch; override;
-    class function Unpack(Bytes: PByte; PacketOffset, Count: Integer; TimeTag:
+    class function Unpack(Bytes: TBytes; PacketOffset, Count: Integer; TimeTag:
         Extended = 0): TOSCPacket; overload; override;
     property Address: string read FAddress write FAddress;
-    property Argument[Index: Integer]: String read GetArgument;
+    property Argument[Index: Integer]: TBytes read GetArgument;
+    property ArgumentAsFloat[Index: Integer]: Single read GetArgumentAsFloat;
+    property ArgumentAsInt[Index: Integer]: Integer read GetArgumentAsInt;
     property ArgumentCount: Integer read GetArgumentCount;
     property IsDecoded: Boolean read FIsDecoded write FIsDecoded;
     property Matched: Boolean read FMatched write FMatched;
@@ -113,27 +119,31 @@ type
   private
     FPackets: TObjectList;
   public
-    constructor Create(Bytes: PByte);
+    constructor Create(Bytes: TBytes);
     destructor Destroy; override;
     procedure Add(const Packet: TOSCPacket);
     function MatchAddress(Address: String): TOSCMessage; override;
-    function ToOSCString: string; override;
+    function ToOSCBytes: TBytes; override;
     procedure Unmatch; override;
-    class function Unpack(Bytes: PByte; PacketOffset, Count: Integer; TimeTag:
+    class function Unpack(Bytes: TBytes; PacketOffset, Count: Integer; TimeTag:
         Extended = 0): TOSCPacket; overload; override;
   end;
 
-  function MakeOSCFloat(value: Single): String;
+function MakeOSCFloat(value: Single): TBytes;
 
-  function MakeOSCInt(value: Integer): String;
+function MakeOSCInt(value: Integer): TBytes;
 
-  function MakeOSCString(value: String): String;
+function MakeOSCString(value: String): TBytes;
 
-  function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
+function UnpackInt(Bytes: TBytes; var Offset: Integer): TBytes;
 
-  function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
+function UnpackString(Bytes: TBytes; var Offset: Integer): TBytes;
 
-  function UnpackString(Bytes: PByte; var Offset: Integer): string;
+function UnpackFloat(Bytes: TBytes; var Offset: Integer): TBytes;
+
+function UnpackAndReturnInt(Bytes: TBytes; var Offset: Integer): Integer;
+
+function UnpackAndReturnFloat(Bytes: TBytes; var Offset: Integer): Single;
 
   const
     OSC_OK = 0;
@@ -144,117 +154,98 @@ type
 implementation
 
 uses
-  SysUtils, Math {$IFNDEF FPC}, WinSock {$ENDIF};
+  Math, IdGlobal {$IFNDEF FPC}, WinSock {$ENDIF};
 
-function MakeOSCFloat(value: Single): String;
+function MakeOSCFloat(value: Single): TBytes;
 var
-  tmp: Byte;
-  intg, i: Integer;
+  intg: Integer;
 begin
-  result := '';
-  intg := Integer(Pointer(value));
+  intg := PInteger(@value)^;
+
   {$IFDEF FPC}
   intg := BEtoN(intg);
   {$ELSE}
   intg := htonl(intg);
   {$ENDIF}
-  for i := 0 to 3 do
-  begin
-    tmp := intg and $ff;
-    result := result + chr(tmp);
-    intg := intg shr 8;
-  end;
+
+  Result := IdGlobal.RawToBytes(intg, SizeOf(intg));
 end;
 
-function MakeOSCInt(value: Integer): String;
-var
-  tmp: Byte;
-  i, val: Integer;
+function MakeOSCInt(value: Integer): TBytes;
 begin
-  result := '';
   {$IFDEF FPC}
-  val := BEtoN(value);
+  value := BEtoN(value);
   {$ELSE}
-  val := htonl(value);
+  value := htonl(value);
   {$ENDIF}
-  for i := 0 to 3 do
-  begin
-    tmp := val and $ff;
-    result := result + chr(tmp);
-    val := val shr 8;
-  end;
+  Result := IdGlobal.RawToBytes(value, SizeOf(value));
 end;
 
-function MakeOSCString(value: String): String;
+function MakeOSCString(value: String): TBytes;
 var i, ln: Integer;
 begin
-  result := value;
-
-  ln := 4 - (length(value)) mod 4;
-  for i := 0 to ln - 1 do
-    result := result + #0;
+  ln := TEncoding.UTF8.GetByteCount(value);
+  ln := ln + (4 - ln mod 4);
+  SetLength(Result, ln);
+  ln := TEncoding.UTF8.GetBytes(value, 1, Length(value), Result, 0);
+  for i := ln to High(Result) do
+    result[i] := 0;
 end;
 
-function UnpackFloat(Bytes: PByte; var Offset: Integer): Single;
+function UnpackInt(Bytes: TBytes; var Offset: Integer): TBytes;
 var
-  i, value: Integer;
-  tmp: PByte;
+  i: Integer;
 begin
-  value := 0;
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  for i := 0 to 3 do
-  begin
-    value := value + tmp^ shl (i * 8);
-    Inc(tmp);
-  end;
-
-  Inc(Offset, 4);
-
-  {$IFDEF FPC}
-  value := NtoBE(value);
-  {$ELSE}
-  value := ntohl(value);
-  {$ENDIF}
-  Result := Single(Pointer(value));
+  SetLength(Result, SizeOf(Integer));
+  // Copy bytes and change byte order
+  for i := 0 to High(Result) do
+    Result[i] := Bytes[Offset + High(Result) - i];
+  Inc(Offset, SizeOf(Integer));
 end;
 
-function UnpackInt(Bytes: PByte; var Offset: Integer): Integer;
+function UnpackString(Bytes: TBytes; var Offset: Integer): TBytes;
 var
-  i, value: Integer;
-  tmp: PByte;
-begin
-  value := 0;
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  for i := 0 to 3 do
-  begin
-    value := value + tmp^ shl (i * 8);
-    Inc(tmp);
-  end;
-
-  Inc(Offset, 4);
-  {$IFDEF FPC}
-  Result := NtoBE(value);
-  {$ELSE}
-  Result := ntohl(value);
-  {$ENDIF}
-end;
-
-function UnpackString(Bytes: PByte; var Offset: Integer): string;
-var
-  tmp: PByte;
   off: Integer;
 begin
-  tmp := Bytes;
-  Inc(tmp, Offset);
+  // Strings are null terminated. Find position of null.
+  off := Offset;
+  while (off < Length(Bytes)) and (Bytes[off] <> 0) do
+    Inc(off);
+  // Retrieve the string.
+  SetLength(Result, off - Offset);
+  IdGlobal.CopyTIdBytes(Bytes, Offset, Result, 0, Length(Result));
+  // Increase the offset by a multiple of 4.
+  Offset := off + (4 - off mod 4);
+end;
 
-  Result := PChar(tmp);
-  off := Length(PChar(tmp));
-  off := off + (4 - off mod 4);
-  Inc(Offset, off)
+function UnpackFloat(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  //value: Integer;
+  i: Integer;
+begin
+  SetLength(Result, SizeOf(Single));
+  // Copy bytes and change byte order
+  for i := 0 to High(Result) do
+  begin
+    Result[i] := Bytes[Offset + High(Result) - i];
+  end;
+  Inc(Offset, SizeOf(Single));
+end;
+
+function UnpackAndReturnInt(Bytes: TBytes; var Offset: Integer): Integer;
+var
+  resultBytes: TBytes;
+begin
+  resultBytes := UnpackInt(Bytes, Offset);
+  Result := PInteger(Pointer(resultBytes))^;
+end;
+
+function UnpackAndReturnFloat(Bytes: TBytes; var Offset: Integer): Single;
+var
+  resultBytes: TBytes;
+begin
+  resultBytes := UnpackFloat(Bytes, Offset);
+  Result := PSingle(Pointer(resultBytes))^;
 end;
 
 
@@ -264,12 +255,12 @@ begin
   Create(nil);
 end;
 
-constructor TOSCMessage.Create(Bytes: PByte);
+constructor TOSCMessage.Create(Bytes: TBytes);
 begin
   inherited;
 
   FTypeTags := ',';
-  FArguments := TStringList.Create;
+  FArguments := TList<TBytes>.Create;
   FIsDecoded := false;
 end;
 
@@ -279,25 +270,23 @@ begin
   inherited;
 end;
 
-function TOSCMessage.AddAsString(TypeTag: Char; Value: String): HResult;
+function TOSCMessage.AddAsBytes(const TypeTag: Char; const Value: String; const
+    fs: TFormatSettings): HResult;
 begin
   Result := OSC_OK;
 
   try
     if TypeTag = 'f' then
-      FArguments.Add(MakeOSCFloat(StrToFloat(Value)))
+      AddFloat(StrToFloat(Value, fs))
     else if TypeTag = 'i' then
-      FArguments.Add(MakeOSCInt(StrToInt(Value)))
+      AddInteger(StrToInt(Value))
     else if TypeTag = 's' then
-      FArguments.Add(MakeOSCString(Value))
+      AddString(Value)
     else
       Result := OSC_UNRECOGNIZED_TYPETAG;
   except on EConvertError do
     Result := OSC_CONVERT_ERROR;
   end;
-
-  if Result  = OSC_OK then
-    FTypeTags := FTypeTags + TypeTag;
 end;
 
 procedure TOSCMessage.AddFloat(Value: Single);
@@ -326,24 +315,34 @@ begin
     exit;
 
   offset := FTypeTagOffset;
-  FTypeTags := UnpackString(FBytes, offset);
+  FTypeTags := TEncoding.ASCII.GetString(UnpackString(FBytes, offset));
 
   for i := 1 to Length(FTypeTags) - 1 do
   begin
     if FTypeTags[i+1] = 's' then
       FArguments.Add(UnpackString(FBytes, offset))
     else if FTypeTags[i+1] = 'i' then
-      FArguments.Add(IntToStr(UnpackInt(FBytes, offset)))
+      FArguments.Add(UnpackInt(FBytes, offset))
     else if FTypeTags[i+1] = 'f' then
-      FArguments.Add(FloatToStr(UnpackFloat(FBytes, offset)));
+      FArguments.Add(UnpackFloat(FBytes, offset));
   end;
 
   FIsDecoded := true;
 end;
 
-function TOSCMessage.GetArgument(Index: Integer): string;
+function TOSCMessage.GetArgument(Index: Integer): TBytes;
 begin
   Result := FArguments[Index];
+end;
+
+function TOSCMessage.GetArgumentAsFloat(Index: Integer): Single;
+begin
+  Result := PSingle(Pointer(FArguments[Index]))^;
+end;
+
+function TOSCMessage.GetArgumentAsInt(Index: Integer): Integer;
+begin
+  Result := PInteger(Pointer(FArguments[Index]))^;
 end;
 
 function TOSCMessage.GetArgumentCount: Integer;
@@ -368,14 +367,19 @@ begin
     Result := nil;
 end;
 
-function TOSCMessage.ToOSCString: string;
+function TOSCMessage.ToOSCBytes: TBytes;
 var
   i: Integer;
+  resultList: TList<Byte>;
 begin
-  Result := MakeOSCString(FAddress) + MakeOSCString(FTypeTags);
+  resultList := TList<Byte>.Create;
+  resultList.AddRange(MakeOSCString(FAddress));
+  resultList.AddRange(MakeOSCString(FTypeTags));
 
   for i := 0 to FArguments.Count - 1 do
-    Result := Result + FArguments[i];
+    resultList.AddRange(FArguments[i]);
+  Result := resultList.ToArray();
+  resultList.Free;
 end;
 
 procedure TOSCMessage.Unmatch;
@@ -383,12 +387,12 @@ begin
   FMatched := false;
 end;
 
-class function TOSCMessage.Unpack(Bytes: PByte; PacketOffset, Count: Integer;
+class function TOSCMessage.Unpack(Bytes: TBytes; PacketOffset, Count: Integer;
     TimeTag: Extended = 0): TOSCPacket;
 begin
   Result := TOSCMessage.Create(Bytes);
   //for now decode address only
-  (Result as TOSCMessage).Address := UnpackString(Bytes, PacketOffset);
+  (Result as TOSCMessage).Address := TEncoding.ASCII.GetString(UnpackString(Bytes, PacketOffset));
   (Result as TOSCMessage).TimeTag := TimeTag;
 
   //save offset for later decoding on demand
@@ -396,7 +400,7 @@ begin
  (Result as TOSCMessage).IsDecoded := false;
 end;
 
-constructor TOSCBundle.Create(Bytes: PByte);
+constructor TOSCBundle.Create(Bytes: TBytes);
 begin
   inherited;
   FPackets := TObjectList.Create;
@@ -428,20 +432,25 @@ begin
   end;
 end;
 
-function TOSCBundle.ToOSCString: string;
+function TOSCBundle.ToOSCBytes: TBytes;
 var
-  timeTag: String;
   i: Integer;
-  packet: String;
+  packet: TBytes;
+  resultList: TList<Byte>;
 begin
-  timeTag := #0#0#0#0#0#0#0#1; //immediately
-  Result := MakeOSCString('#bundle') + timeTag;
+  resultList := TList<Byte>.Create;
+  resultList.AddRange(MakeOSCString('#bundle'));
+  resultList.AddRange(TEncoding.UTF8.GetBytes(#0#0#0#0#0#0#0#1)); //immediately
 
   for i := 0 to FPackets.Count - 1 do
   begin
-    packet := (FPackets[i] as TOSCPacket).ToOSCString;
-    Result := Result + MakeOSCInt(Length(packet)) + packet;
+    packet := (FPackets[i] as TOSCPacket).ToOSCBytes;
+    resultList.AddRange(MakeOSCInt(Length(packet)));
+    resultList.AddRange(packet);
   end;
+
+  Result := resultList.ToArray();
+  resultList.Free;
 end;
 
 procedure TOSCBundle.Unmatch;
@@ -452,7 +461,7 @@ begin
     (FPackets[i] as TOSCPacket).UnMatch;
 end;
 
-class function TOSCBundle.Unpack(Bytes: PByte; PacketOffset, Count: Integer;
+class function TOSCBundle.Unpack(Bytes: TBytes; PacketOffset, Count: Integer;
     TimeTag: Extended = 0): TOSCPacket;
 var
   packetLength: Integer;
@@ -464,14 +473,14 @@ begin
   UnpackString(Bytes, PacketOffset);
 
   //advance the timestamp
-  tt1 := Cardinal(UnpackInt(Bytes, PacketOffset));
-  tt2 := Cardinal(UnpackInt(Bytes, PacketOffset));
+  tt1 := Cardinal(UnpackAndReturnInt(Bytes, PacketOffset));
+  tt2 := Cardinal(UnpackAndReturnInt(Bytes, PacketOffset));
 
   TimeTag := tt1 + tt2 / power(2, 32);
 
   while PacketOffset < Count do
   begin
-    packetLength := UnpackInt(Bytes, PacketOffset);
+    packetLength := UnpackAndReturnInt(Bytes, PacketOffset);
     //note: PacketOffset is always from the very beginning of Bytes!
     //not the beginning of the current packet.
     (Result as TOSCBundle).Add(TOSCPacket.Unpack(Bytes, PacketOffset, PacketOffset + packetLength, TimeTag));
@@ -479,7 +488,7 @@ begin
   end;
 end;
 
-constructor TOSCPacket.Create(Bytes: PByte);
+constructor TOSCPacket.Create(Bytes: TBytes);
 begin
   FBytes := Bytes;
 end;
@@ -587,7 +596,7 @@ begin
 //    OSCWarning("Unterminated { in pattern \".../%s/...\"", theWholePattern);
 //    return FALSE;
 //  }
-//}
+//}
 
   Inc(p); // skip close curly brace
   Inc(pMessage); // skip open curly brace
@@ -691,20 +700,15 @@ begin
   end;
 end;
 
-class function TOSCPacket.Unpack(Bytes: PByte; Count: Integer): TOSCPacket;
+class function TOSCPacket.Unpack(Bytes: TBytes; Count: Integer): TOSCPacket;
 begin
   Result := UnPack(Bytes, 0, Count);
 end;
 
-class function TOSCPacket.Unpack(Bytes: PByte; Offset, Count: Integer; TimeTag:
-    Extended = 0): TOSCPacket;
-var
-  tmp: PByte;
+class function TOSCPacket.Unpack(Bytes: TBytes; Offset, Count: Integer;
+    TimeTag: Extended = 0): TOSCPacket;
 begin
-  tmp := Bytes;
-  Inc(tmp, Offset);
-
-  if Char(tmp^) = '#' then
+  if Char(Bytes[Offset]) = '#' then
     Result := TOSCBundle.UnPack(Bytes, Offset, Count)
   else
     Result := TOSCMessage.UnPack(Bytes, Offset, Count, TimeTag);
