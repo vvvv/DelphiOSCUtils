@@ -27,17 +27,17 @@
 
 ////encoding a single message:
 //first create a message: msg := TOSCMessage.Create(address)
-//then call msg.AddAsString(typetag, value) to add any number of arguments
-//with  msg.ToOSCString you get its osc-string representation
+//then call msg.AddFloat(value)... to add any number of arguments
+//with msg.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
 ////encoding a bundle:
 //first create a bundle: bundle := TOSCBundle.Create
 //then add any number of packets (i.e. message, bundle) via bundle.Add(packet)
-//with bundle.ToOSCString you get its osc-string representation
+//with bundle.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
 ////decoding a string
-//use TOSCPacket.Unpack(PByte(osc-string), Length(osc-string)) to create
-//TOSCPackets of your osc-strings (those can be either bundles or single
+//use TOSCPacket.Unpack(bytes, Length(bytes)) to create
+//TOSCPackets of your osc-bytes (those can be either bundles or single
 //messages. if you want to decode several packets at once you can create
 //a container bundle first and add the packets you create like this.
 //then use msg := FPacket.MatchAddress(address) to find a message with the
