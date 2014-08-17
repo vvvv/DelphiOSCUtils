@@ -31,7 +31,7 @@
 //with msg.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
 ////encoding a bundle:
-//first create a bundle: bundle := TOSCBundle.Create
+//first create a bundle: bundle := TOSCBundle.Create(nil)
 //then add any number of packets (i.e. message, bundle) via bundle.Add(packet)
 //with bundle.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
