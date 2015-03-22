@@ -31,7 +31,7 @@
 //with msg.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
 ////encoding a bundle:
-//first create a bundle: bundle := TOSCBundle.Create(nil)
+//first create a bundle: bundle := TOSCBundle.Create
 //then add any number of packets (i.e. message, bundle) via bundle.Add(packet)
 //with bundle.ToOSCBytes you get the TBytes you can send via an indy10 TidUDPClient.SendBuffer
 
@@ -51,7 +51,9 @@ unit OSCUtils;
 
 interface
 
-uses Classes, Contnrs, SysUtils, System.Generics.Collections;
+uses Classes, SysUtils, System.Generics.Collections;
+
+{$ZEROBASEDSTRINGS OFF}
 
 type
   TOSCPacket = class;
@@ -88,6 +90,7 @@ type
     function GetArgumentAsInt(Index: Integer): Integer;
     function GetArgumentCount: Integer;
     function GetTypeTag(Index: Integer): string;
+    function GetArgumentAsString(Index: Integer): string;
   public
     constructor Create(Address: string); overload;
     constructor Create(Bytes: TBytes); overload;
@@ -97,6 +100,7 @@ type
     procedure AddFloat(Value: Single);
     procedure AddInteger(Value: Integer);
     procedure AddString(Value: String);
+    procedure AddBlob(Value: TBytes);
     procedure Decode;
     function MatchAddress(Address: String): TOSCMessage; override;
     function ToOSCBytes: TBytes; override;
@@ -105,6 +109,7 @@ type
         Extended = 0): TOSCPacket; overload; override;
     property Address: string read FAddress write FAddress;
     property Argument[Index: Integer]: TBytes read GetArgument;
+    property ArgumentAsString[Index: Integer]: string read GetArgumentAsString;
     property ArgumentAsFloat[Index: Integer]: Single read GetArgumentAsFloat;
     property ArgumentAsInt[Index: Integer]: Integer read GetArgumentAsInt;
     property ArgumentCount: Integer read GetArgumentCount;
@@ -117,7 +122,7 @@ type
 
   TOSCBundle = class(TOSCPacket)
   private
-    FPackets: TObjectList;
+    FPackets: TObjectList<TOSCPacket>;
   public
     constructor Create(Bytes: TBytes);
     destructor Destroy; override;
@@ -168,7 +173,7 @@ begin
   intg := htonl(intg);
   {$ENDIF}
 
-  Result := IdGlobal.RawToBytes(intg, SizeOf(intg));
+  Result := TBytes(IdGlobal.RawToBytes(intg, SizeOf(intg)));
 end;
 
 function MakeOSCInt(value: Integer): TBytes;
@@ -178,8 +183,25 @@ begin
   {$ELSE}
   value := htonl(value);
   {$ENDIF}
-  Result := IdGlobal.RawToBytes(value, SizeOf(value));
+  Result := TBytes(IdGlobal.RawToBytes(value, SizeOf(value)));
 end;
+
+function OSCtoInt(Value: TBytes): Integer;
+begin
+  Result := htonl(IdGlobal.BytesToLongInt(TIdBytes(Value)));
+end;
+
+//function OSCtoFloat(Value: TBytes): Single;
+//type
+//  TBytesAndFloat = packed record
+//    case Integer of
+//      1: (ValueF: Single);
+//      2: (a, b, c, d: Byte);
+//    end;
+//begin
+//  Result := PSingle(@htonl(IdGlobal.BytesToLongInt(TIdBytes(Value))));
+//end;
+
 
 function MakeOSCString(value: String): TBytes;
 var i, ln: Integer;
@@ -187,7 +209,23 @@ begin
   ln := TEncoding.UTF8.GetByteCount(value);
   ln := ln + (4 - ln mod 4);
   SetLength(Result, ln);
+  {$IFDEF NEXTGEN}
+  ln := TEncoding.UTF8.GetBytes(value, 0, Length(value), Result, 0);
+  {$ELSE}
   ln := TEncoding.UTF8.GetBytes(value, 1, Length(value), Result, 0);
+  {$ENDIF}
+  for i := ln to High(Result) do
+    result[i] := 0;
+end;
+
+function MakeOSCBlob(value: TBytes): TBytes; //@@@ SZ added
+var i, ln: Integer;
+begin
+  ln := Length(Value) + 4; // add size of Int32
+  ln := ln + (ln mod 4);
+  Result := MakeOSCInt(Length(Value));
+  SetLength(Result, ln);
+  IdGlobal.CopyTIdBytes(TIdBytes(value), 0, TIdBytes(Result), 4, Length(Value));
   for i := ln to High(Result) do
     result[i] := 0;
 end;
@@ -203,6 +241,17 @@ begin
   Inc(Offset, SizeOf(Integer));
 end;
 
+function CopyInt(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  i: Integer;
+begin
+  SetLength(Result, SizeOf(Integer));
+  // Copy bytes and do NOT change byte order
+  for i := 0 to High(Result) do
+    Result[i] := Bytes[Offset + i];
+  Inc(Offset, SizeOf(Integer));
+end;
+
 function UnpackString(Bytes: TBytes; var Offset: Integer): TBytes;
 var
   off: Integer;
@@ -213,10 +262,27 @@ begin
     Inc(off);
   // Retrieve the string.
   SetLength(Result, off - Offset);
-  IdGlobal.CopyTIdBytes(Bytes, Offset, Result, 0, Length(Result));
+  IdGlobal.CopyTIdBytes(TIdBytes(Bytes), Offset, TIdBytes(Result), 0, Length(Result));
   // Increase the offset by a multiple of 4.
   Offset := off + (4 - off mod 4);
 end;
+
+function UnpackBlob(Bytes: TBytes; var Offset: Integer): TBytes; //@@@ SZ Added
+var
+  off: Integer;
+  Len: Cardinal;
+begin
+  // Read length of blob
+  Len := UnpackAndReturnInt(Bytes, Offset);
+
+  // Retrieve the blo
+  SetLength(Result, Len);
+  IdGlobal.CopyTIdBytes(TIdBytes(Bytes), Offset, TIdBytes(Result), 0, Len);
+  off := Offset + Len;
+  // Increase the offset by a multiple of 4.
+  Offset := off + (4 - off mod 4);
+end;
+
 
 function UnpackFloat(Bytes: TBytes; var Offset: Integer): TBytes;
 var
@@ -231,6 +297,18 @@ begin
   end;
   Inc(Offset, SizeOf(Single));
 end;
+
+function CopyFloat(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  i: Integer;
+begin
+  SetLength(Result, SizeOf(Single));
+  // Copy bytes and do NOT change byte order
+  for i := 0 to High(Result) do
+    Result[i] := Bytes[Offset + i];
+  Inc(Offset, SizeOf(Single));
+end;
+
 
 function UnpackAndReturnInt(Bytes: TBytes; var Offset: Integer): Integer;
 var
@@ -257,7 +335,7 @@ end;
 
 constructor TOSCMessage.Create(Bytes: TBytes);
 begin
-  inherited;
+  inherited Create(Bytes);
 
   FTypeTags := ',';
   FArguments := TList<TBytes>.Create;
@@ -307,6 +385,12 @@ begin
   FArguments.Add(MakeOSCString(Value));
 end;
 
+procedure TOSCMessage.AddBlob(Value: TBytes);
+begin
+  FTypeTags := FTypeTags + 'b';
+  FArguments.Add(MakeOSCBlob(Value));
+end;
+
 procedure TOSCMessage.Decode;
 var
   i, offset: Integer;
@@ -322,9 +406,11 @@ begin
     if FTypeTags[i+1] = 's' then
       FArguments.Add(UnpackString(FBytes, offset))
     else if FTypeTags[i+1] = 'i' then
-      FArguments.Add(UnpackInt(FBytes, offset))
+       FArguments.Add(CopyInt(FBytes, offset))  //@@@ SZ: UnpackInt -> CopyInt    Bugfix: Adding an int and then immediately reading it back reverses the byte order -> do the decoding in GetArgument instead
     else if FTypeTags[i+1] = 'f' then
-      FArguments.Add(UnpackFloat(FBytes, offset));
+      FArguments.Add(CopyFloat(FBytes, offset)) //@@@ SZ: UnpackFloat -> CopyFloat
+    else if FTypeTags[i+1] = 'b' then
+      FArguments.Add(UnpackBlob(FBytes, offset));
   end;
 
   FIsDecoded := true;
@@ -336,13 +422,21 @@ begin
 end;
 
 function TOSCMessage.GetArgumentAsFloat(Index: Integer): Single;
+var
+  Idx: Integer;
 begin
-  Result := PSingle(Pointer(FArguments[Index]))^;
+  Idx := 0;
+  Result := UnpackAndReturnFloat(FArguments[Index], Idx);  // Result := PSingle(Pointer(FArguments[Index]))^; //@@@ SZ  (fixed problem described in TOSCMessage.Decode)
 end;
 
 function TOSCMessage.GetArgumentAsInt(Index: Integer): Integer;
 begin
-  Result := PInteger(Pointer(FArguments[Index]))^;
+  Result := OSCtoInt(FArguments[Index]); //Result := PInteger(Pointer(FArguments[Index]))^; @@@ SZ (fixed problem described in TOSCMessage.Decode)
+end;
+
+function TOSCMessage.GetArgumentAsString(Index: Integer): string;
+begin
+  Result := Trim(StringOf(FArguments[Index]));
 end;
 
 function TOSCMessage.GetArgumentCount: Integer;
@@ -402,8 +496,8 @@ end;
 
 constructor TOSCBundle.Create(Bytes: TBytes);
 begin
-  inherited;
-  FPackets := TObjectList.Create;
+  inherited Create(Bytes);
+  FPackets := TObjectList<TOSCPacket>.Create;
   FPackets.OwnsObjects := true;
 end;
 
