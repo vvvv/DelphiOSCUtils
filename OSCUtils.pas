@@ -446,7 +446,7 @@ end;
 
 function TOSCMessage.GetTypeTag(Index: Integer): string;
 begin
-  Result := FTypeTags[Index + 2];
+  Result := FTypeTags[Index + 1 + Low(FTypeTags)]; // Result := FTypeTags[Index + 2]; //@@@ iOS zero based strings
 end;
 
 function TOSCMessage.MatchAddress(Address: String): TOSCMessage;
