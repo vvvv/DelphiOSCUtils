@@ -436,7 +436,7 @@ end;
 
 function TOSCMessage.GetArgumentAsString(Index: Integer): string;
 begin
-  Result := Trim(StringOf(FArguments[Index]));
+  Result := StringOf(FArguments[Index]).TrimRight([#0]);
 end;
 
 function TOSCMessage.GetArgumentCount: Integer;
