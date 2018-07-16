@@ -168,7 +168,7 @@ begin
   intg := htonl(intg);
   {$ENDIF}
 
-  Result := IdGlobal.RawToBytes(intg, SizeOf(intg));
+  Result := TBytes(IdGlobal.RawToBytes(intg, SizeOf(intg)));
 end;
 
 function MakeOSCInt(value: Integer): TBytes;
@@ -178,7 +178,7 @@ begin
   {$ELSE}
   value := htonl(value);
   {$ENDIF}
-  Result := IdGlobal.RawToBytes(value, SizeOf(value));
+  Result := TBytes(IdGlobal.RawToBytes(value, SizeOf(value)));
 end;
 
 function MakeOSCString(value: String): TBytes;
@@ -213,7 +213,7 @@ begin
     Inc(off);
   // Retrieve the string.
   SetLength(Result, off - Offset);
-  IdGlobal.CopyTIdBytes(Bytes, Offset, Result, 0, Length(Result));
+  Move(Bytes[Offset], Result[0], Length(Result));
   // Increase the offset by a multiple of 4.
   Offset := off + (4 - off mod 4);
 end;
