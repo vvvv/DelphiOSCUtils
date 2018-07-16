@@ -4,7 +4,7 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, IdSocketHandle, IdUDPServer,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, IdSocketHandle, IdUDPServer, IdGlobal,
   IdBaseComponent, IdComponent, IdUDPBase, IdUDPClient, Vcl.StdCtrls;
 
 type
@@ -23,7 +23,7 @@ type
     SendArgumentsEdit: TEdit;
     SendButton: TButton;
     procedure FUDPServerUDPRead(AThread: TIdUDPListenerThread; AData:
-        TArray<System.Byte>; ABinding: TIdSocketHandle);
+        TIdBytes; ABinding: TIdSocketHandle);
     procedure SendButtonClick(Sender: TObject);
   private
     { Private declarations }
@@ -41,16 +41,16 @@ uses OSCUtils;
 {$R *.dfm}
 
 procedure TForm1.FUDPServerUDPRead(AThread: TIdUDPListenerThread; AData:
-    TArray<System.Byte>; ABinding: TIdSocketHandle);
+    TIdBytes; ABinding: TIdSocketHandle);
 var
-  packet: TOSCPacket;
-  msg: TOSCMessage;
-  i: Integer;
-  typetag, arg: String;
+  packet        : TOSCPacket;
+  msg           : TOSCMessage;
+  i             : Integer;
+  typetag, arg  : String;
   formatSettings: TFormatSettings;
 begin
-  packet := TOSCpacket.Unpack(AData, Length(AData));
-  msg := packet.MatchAddress(ReceiveAddressEdit.Text);
+  packet := TOSCPacket.Unpack(TBytes(AData), Length(AData));
+  msg    := packet.MatchAddress(ReceiveAddressEdit.Text);
   if Assigned(msg) then
   begin
     msg.Decode;
@@ -76,23 +76,23 @@ end;
 
 procedure TForm1.SendButtonClick(Sender: TObject);
 var
-  msg: TOSCMessage;
+  msg   : TOSCMessage;
   bundle: TOSCBundle;
 begin
-  //create a bundle
+  // create a bundle
   bundle := TOSCBundle.Create(nil);
 
-  //create a message
+  // create a message
   msg := TOSCMessage.Create(SendAddressEdit.Text);
 
-  //add arguments to the message
+  // add arguments to the message
   msg.AddString(SendArgumentsEdit.Text);
 
-  //add message to the bundle
+  // add message to the bundle
   bundle.Add(msg);
 
-  //send bundle as bytes
-  FUDPClient.SendBuffer(bundle.ToOSCBytes);
+  // send bundle as bytes
+  FUDPClient.SendBuffer(TIdBytes(bundle.ToOSCBytes));
 end;
 
 end.
