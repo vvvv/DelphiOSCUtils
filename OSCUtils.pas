@@ -51,9 +51,13 @@ unit OSCUtils;
 
 interface
 
-uses Classes, SysUtils, System.Generics.Collections;
+{$I SBDefines.INC}
 
-{$ZEROBASEDSTRINGS OFF}
+uses Classes, SysUtils, Generics.Collections;
+
+{$IFDEF NEXTGEN}
+  {$ZEROBASEDSTRINGS OFF}
+{$ENDIF}
 
 type
   TOSCPacket = class;
@@ -188,7 +192,7 @@ end;
 
 function OSCtoInt(Value: TBytes): Integer;
 begin
-  Result := htonl(IdGlobal.BytesToLongInt(TIdBytes(Value)));
+  Result := htonl(IdGlobal.BytesToInt32(TIdBytes(Value)));
 end;
 
 //function OSCtoFloat(Value: TBytes): Single;
@@ -218,12 +222,12 @@ begin
     result[i] := 0;
 end;
 
-function MakeOSCBlob(value: TBytes): TBytes; //@@@ SZ added
+function MakeOSCBlob(value: TBytes): TBytes; // SZ added
 var i, ln: Integer;
 begin
   ln := Length(Value) + 4; // add size of Int32
   ln := ln + (ln mod 4);
-  Result := MakeOSCInt(Length(Value));
+  Result := MakeOSCInt(Length(Value)); // 1st Int32 is content size
   SetLength(Result, ln);
   IdGlobal.CopyTIdBytes(TIdBytes(value), 0, TIdBytes(Result), 4, Length(Value));
   for i := ln to High(Result) do
@@ -267,7 +271,23 @@ begin
   Offset := off + (4 - off mod 4);
 end;
 
-function UnpackBlob(Bytes: TBytes; var Offset: Integer): TBytes; //@@@ SZ Added
+function CopyString(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  off: Integer;
+begin
+  // Strings are null terminated. Find position of null.
+  off := Offset;
+  while (off < Length(Bytes)) and (Bytes[off] <> 0) do
+    Inc(off);
+  off := off + (4 - off mod 4);
+  // Retrieve the string.
+  SetLength(Result, off - Offset);
+  IdGlobal.CopyTIdBytes(TIdBytes(Bytes), Offset, TIdBytes(Result), 0, Length(Result));
+  // Increase the offset by a multiple of 4.
+  Offset := off;
+end;
+
+function UnpackBlob(Bytes: TBytes; var Offset: Integer): TBytes; //SZ Added
 var
   off: Integer;
   Len: Cardinal;
@@ -282,7 +302,6 @@ begin
   // Increase the offset by a multiple of 4.
   Offset := off + (4 - off mod 4);
 end;
-
 
 function UnpackFloat(Bytes: TBytes; var Offset: Integer): TBytes;
 var
@@ -406,9 +425,9 @@ begin
     if FTypeTags[i+1] = 's' then
       FArguments.Add(UnpackString(FBytes, offset))
     else if FTypeTags[i+1] = 'i' then
-       FArguments.Add(CopyInt(FBytes, offset))  //@@@ SZ: UnpackInt -> CopyInt    Bugfix: Adding an int and then immediately reading it back reverses the byte order -> do the decoding in GetArgument instead
+       FArguments.Add(CopyInt(FBytes, offset))  // SZ: UnpackInt -> CopyInt    Bugfix: Adding an int and then immediately reading it back reverses the byte order -> do the decoding in GetArgument instead
     else if FTypeTags[i+1] = 'f' then
-      FArguments.Add(CopyFloat(FBytes, offset)) //@@@ SZ: UnpackFloat -> CopyFloat
+      FArguments.Add(CopyFloat(FBytes, offset)) // SZ: UnpackFloat -> CopyFloat
     else if FTypeTags[i+1] = 'b' then
       FArguments.Add(UnpackBlob(FBytes, offset));
   end;
@@ -426,17 +445,21 @@ var
   Idx: Integer;
 begin
   Idx := 0;
-  Result := UnpackAndReturnFloat(FArguments[Index], Idx);  // Result := PSingle(Pointer(FArguments[Index]))^; //@@@ SZ  (fixed problem described in TOSCMessage.Decode)
+  Result := UnpackAndReturnFloat(FArguments[Index], Idx);  // Result := PSingle(Pointer(FArguments[Index]))^; // SZ  (fixed problem described in TOSCMessage.Decode)
 end;
 
 function TOSCMessage.GetArgumentAsInt(Index: Integer): Integer;
 begin
-  Result := OSCtoInt(FArguments[Index]); //Result := PInteger(Pointer(FArguments[Index]))^; @@@ SZ (fixed problem described in TOSCMessage.Decode)
+  Result := OSCtoInt(FArguments[Index]); //Result := PInteger(Pointer(FArguments[Index]))^;  SZ (fixed problem described in TOSCMessage.Decode)
 end;
 
 function TOSCMessage.GetArgumentAsString(Index: Integer): string;
 begin
+  {$IF compilerversion >= 30}
   Result := StringOf(FArguments[Index]).TrimRight([#0]);
+  {$ELSE}
+  Result := TrimRight(StringOf(FArguments[Index]));
+  {$IFEND}
 end;
 
 function TOSCMessage.GetArgumentCount: Integer;
@@ -446,7 +469,11 @@ end;
 
 function TOSCMessage.GetTypeTag(Index: Integer): string;
 begin
-  Result := FTypeTags[Index + 1 + Low(FTypeTags)]; // Result := FTypeTags[Index + 2]; //@@@ iOS zero based strings
+  {$IF compilerversion >= 30}
+  Result := FTypeTags[Index + 1 + Low(FTypeTags)]; // Result := FTypeTags[Index + 2]; // iOS zero based strings
+  {$ELSE}
+  Result := FTypeTags[Index + 1 + 1]
+  {$IFEND}
 end;
 
 function TOSCMessage.MatchAddress(Address: String): TOSCMessage;
@@ -463,16 +490,35 @@ end;
 
 function TOSCMessage.ToOSCBytes: TBytes;
 var
-  i: Integer;
+  i, j: Integer;
   resultList: TList<Byte>;
+  tmp: array of Byte;
+  MissingBytes: Integer;
 begin
   resultList := TList<Byte>.Create;
   resultList.AddRange(MakeOSCString(FAddress));
   resultList.AddRange(MakeOSCString(FTypeTags));
 
   for i := 0 to FArguments.Count - 1 do
+  begin
     resultList.AddRange(FArguments[i]);
+
+    MissingBytes := resultlist.Count mod 4; //
+    if MissingBytes <> 0 then
+    begin
+      SetLength(tmp, MissingBytes);
+      for j := 0 to MissingBytes - 1 do
+        tmp[I] := 0;
+      resultlist.AddRange(tmp);
+    end;
+  end;
+  {$IFDEF DX100_UP}
   Result := resultList.ToArray();
+  {$ELSE}
+  SetLength(Result, resultList.Count);
+  for I := 0 to resultList.Count - 1 do
+    Result[I] := resultList[I];
+  {$ENDIF}
   resultList.Free;
 end;
 
@@ -543,7 +589,13 @@ begin
     resultList.AddRange(packet);
   end;
 
+  {$IFDEF DX100_UP}
   Result := resultList.ToArray();
+  {$ELSE}
+  SetLength(Result, resultList.Count);
+  for I := 0 to resultList.Count - 1 do
+    Result[I] := resultList[I];
+  {$ENDIF}
   resultList.Free;
 end;
 
@@ -690,7 +742,8 @@ begin
 //    OSCWarning("Unterminated { in pattern \".../%s/...\"", theWholePattern);
 //    return FALSE;
 //  }
-//}
+//}
+
 
   Inc(p); // skip close curly brace
   Inc(pMessage); // skip open curly brace
