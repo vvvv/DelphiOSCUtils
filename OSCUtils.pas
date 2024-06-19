@@ -95,6 +95,7 @@ type
     function GetArgumentCount: Integer;
     function GetTypeTag(Index: Integer): string;
     function GetArgumentAsString(Index: Integer): string;
+    function GetArgumentAsDouble(Index: Integer): Double;
   public
     constructor Create(Address: string); overload;
     constructor Create(Bytes: TBytes); overload;
@@ -102,6 +103,7 @@ type
     function AddAsBytes(const TypeTag: Char; const Value: String; const fs:
         TFormatSettings): HResult;
     procedure AddFloat(Value: Single);
+    procedure AddDouble(Value: Double);
     procedure AddInteger(Value: Integer);
     procedure AddString(Value: String);
     procedure AddBlob(Value: TBytes);
@@ -115,6 +117,7 @@ type
     property Argument[Index: Integer]: TBytes read GetArgument;
     property ArgumentAsString[Index: Integer]: string read GetArgumentAsString;
     property ArgumentAsFloat[Index: Integer]: Single read GetArgumentAsFloat;
+    property ArgumentAsDouble[Index: Integer]: Double read GetArgumentAsDouble;
     property ArgumentAsInt[Index: Integer]: Integer read GetArgumentAsInt;
     property ArgumentCount: Integer read GetArgumentCount;
     property IsDecoded: Boolean read FIsDecoded write FIsDecoded;
@@ -180,6 +183,37 @@ begin
   Result := TBytes(IdGlobal.RawToBytes(intg, SizeOf(intg)));
 end;
 
+function SwapEndianInt64(Value: Int64): Int64;  // from AI!
+var
+  ByteArray: array[0..7] of Byte absolute Value;
+  Temp: Byte;
+begin
+  Temp := ByteArray[0];
+  ByteArray[0] := ByteArray[7];
+  ByteArray[7] := Temp;
+  Temp := ByteArray[1];
+  ByteArray[1] := ByteArray[6];
+  ByteArray[6] := Temp;
+  Temp := ByteArray[2];
+  ByteArray[2] := ByteArray[5];
+  ByteArray[5] := Temp;
+  Temp := ByteArray[3];
+  ByteArray[3] := ByteArray[4];
+  ByteArray[4] := Temp;
+  Result := Value;
+end;
+
+function MakeOSCDouble(value: Double): TBytes;
+var
+  intg: Int64;
+begin
+  intg := PInt64(@value)^;
+
+  intg := SwapEndianInt64(intg);
+
+  Result := TBytes(IdGlobal.RawToBytes(intg, SizeOf(intg)));
+end;
+
 function MakeOSCInt(value: Integer): TBytes;
 begin
   {$IFDEF FPC}
@@ -222,7 +256,7 @@ begin
     result[i] := 0;
 end;
 
-function MakeOSCBlob(value: TBytes): TBytes; // SZ added
+function MakeOSCBlob(value: TBytes): TBytes; 
 var i, ln: Integer;
 begin
   ln := Length(Value) + 4; // add size of Int32
@@ -287,7 +321,7 @@ begin
   Offset := off;
 end;
 
-function UnpackBlob(Bytes: TBytes; var Offset: Integer): TBytes; //SZ Added
+function UnpackBlob(Bytes: TBytes; var Offset: Integer): TBytes;
 var
   off: Integer;
   Len: Cardinal;
@@ -317,6 +351,20 @@ begin
   Inc(Offset, SizeOf(Single));
 end;
 
+function UnpackDouble(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  //value: Integer;
+  i: Integer;
+begin
+  SetLength(Result, SizeOf(Double));
+  // Copy bytes and change byte order
+  for i := 0 to High(Result) do
+  begin
+    Result[i] := Bytes[Offset + High(Result) - i];
+  end;
+  Inc(Offset, SizeOf(Double));
+end;
+
 function CopyFloat(Bytes: TBytes; var Offset: Integer): TBytes;
 var
   i: Integer;
@@ -328,6 +376,16 @@ begin
   Inc(Offset, SizeOf(Single));
 end;
 
+function CopyDouble(Bytes: TBytes; var Offset: Integer): TBytes;
+var
+  i: Integer;
+begin
+  SetLength(Result, SizeOf(Double));
+  // Copy bytes and do NOT change byte order
+  for i := 0 to High(Result) do
+    Result[i] := Bytes[Offset + i];
+  Inc(Offset, SizeOf(Double));
+end;
 
 function UnpackAndReturnInt(Bytes: TBytes; var Offset: Integer): Integer;
 var
@@ -343,6 +401,14 @@ var
 begin
   resultBytes := UnpackFloat(Bytes, Offset);
   Result := PSingle(Pointer(resultBytes))^;
+end;
+
+function UnpackAndReturnDouble(Bytes: TBytes; var Offset: Integer): Double;
+var
+  resultBytes: TBytes;
+begin
+  resultBytes := UnpackDouble(Bytes, Offset);
+  Result := PDouble(Pointer(resultBytes))^;
 end;
 
 
@@ -379,6 +445,8 @@ begin
       AddInteger(StrToInt(Value))
     else if TypeTag = 's' then
       AddString(Value)
+    else if TypeTag = 'd' then
+      AddDouble(StrToFloat(Value))
     else
       Result := OSC_UNRECOGNIZED_TYPETAG;
   except on EConvertError do
@@ -390,6 +458,12 @@ procedure TOSCMessage.AddFloat(Value: Single);
 begin
   FTypeTags := FTypeTags + 'f';
   FArguments.Add(MakeOSCFloat(Value));
+end;
+
+procedure TOSCMessage.AddDouble(Value: Double);
+begin
+  FTypeTags := FTypeTags + 'd';
+  FArguments.Add(MakeOSCDouble(Value));
 end;
 
 procedure TOSCMessage.AddInteger(Value: Integer);
@@ -428,6 +502,8 @@ begin
        FArguments.Add(CopyInt(FBytes, offset))  // SZ: UnpackInt -> CopyInt    Bugfix: Adding an int and then immediately reading it back reverses the byte order -> do the decoding in GetArgument instead
     else if FTypeTags[i+1] = 'f' then
       FArguments.Add(CopyFloat(FBytes, offset)) // SZ: UnpackFloat -> CopyFloat
+    else if FTypeTags[i+1] = 'd' then
+      FArguments.Add(CopyDouble(FBytes, offset)) 
     else if FTypeTags[i+1] = 'b' then
       FArguments.Add(UnpackBlob(FBytes, offset));
   end;
@@ -448,9 +524,17 @@ begin
   Result := UnpackAndReturnFloat(FArguments[Index], Idx);  // Result := PSingle(Pointer(FArguments[Index]))^; // SZ  (fixed problem described in TOSCMessage.Decode)
 end;
 
+function TOSCMessage.GetArgumentAsDouble(Index: Integer): Double;
+var
+  Idx: Integer;
+begin
+  Idx := 0;
+  Result := UnpackAndReturnDouble(FArguments[Index], Idx);
+end;
+
 function TOSCMessage.GetArgumentAsInt(Index: Integer): Integer;
 begin
-  Result := OSCtoInt(FArguments[Index]); //Result := PInteger(Pointer(FArguments[Index]))^;  SZ (fixed problem described in TOSCMessage.Decode)
+  Result := OSCtoInt(FArguments[Index]); //Result := PInteger(Pointer(FArguments[Index]))^; //SZ (fixed problem described in TOSCMessage.Decode)
 end;
 
 function TOSCMessage.GetArgumentAsString(Index: Integer): string;
@@ -503,7 +587,7 @@ begin
   begin
     resultList.AddRange(FArguments[i]);
 
-    MissingBytes := resultlist.Count mod 4; //
+    MissingBytes := resultlist.Count mod 4; //SZ
     if MissingBytes <> 0 then
     begin
       SetLength(tmp, MissingBytes);
